@@ -6,7 +6,7 @@ import { teamMembers, teams } from "@/db/schema/teams";
 import { users } from "@/db/schema/users";
 import CreateTeamSchema from "@/lib/schema/CreateTeamSchema";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { and, eq, like, ne } from "drizzle-orm";
+import { and, eq, inArray, like, ne, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -214,79 +214,251 @@ type GroupedTeam = {
   joinRequests: JoinRequest[];
 };
 
+// export async function getUserTeams(userId: number) {
+//   try {
+//     // Create aliases for self-joins
+//     const inviteeAlias = alias(users, "invitee");
+//     const requesterAlias = alias(users, "requester");
+
+//     const userTeams = await db
+//       .select()
+//       .from(teams)
+//       .leftJoin(teamMembers, eq(teams.id, teamMembers.teamId))
+//       .leftJoin(users, eq(teamMembers.userId, users.id))
+//       .leftJoin(teamInviteRequests, eq(teams.id, teamInviteRequests.teamId))
+//       .leftJoin(inviteeAlias, eq(teamInviteRequests.inviteeId, inviteeAlias.id))
+//       .leftJoin(teamJoinRequests, eq(teams.id, teamJoinRequests.teamId))
+//       .leftJoin(
+//         requesterAlias,
+//         eq(teamJoinRequests.requesterId, requesterAlias.id)
+//       )
+//       .where(or(eq(teams.captainId, userId), eq(teamMembers.userId, userId)));
+//     console.log("🚀 ~ getUserTeams ~ userTeams:", userTeams);
+
+//     if (!userTeams) {
+//       return {
+//         success: false,
+//         error: "Teams not found",
+//       };
+//     }
+
+//     const groupedTeams = userTeams.reduce<{ [key: number]: GroupedTeam }>(
+//       (acc, item) => {
+//         console.log("🚀 ~ getUserTeams ~ item:", item);
+//         const teamId = item.teams.id;
+
+//         // Check if the team is already in the accumulator
+//         if (!acc[teamId]) {
+//           acc[teamId] = {
+//             team: item.teams,
+//             members: [],
+//             invites: [],
+//             joinRequests: [],
+//           };
+//         }
+
+//         // Add team member if present
+//         if (item.team_members && item.users) {
+//           acc[teamId].members.push({
+//             userId: item.team_members.userId,
+//             // email: item.users.email,
+//             // phone: item.users.phone,
+//             gamerTag: item.users.gamerTag,
+//           });
+//         }
+
+//         // Add invite if present
+//         if (item.team_invite_requests && item.invitee) {
+//           acc[teamId].invites.push({
+//             userId: item.team_invite_requests.inviteeId,
+//             gamerTag: item.invitee.gamerTag, // Include gamerTag for invites
+//             status: item.team_invite_requests.status,
+//           });
+//         }
+
+//         // Add join request if present
+//         if (item.team_join_requests && item.requester) {
+//           acc[teamId].joinRequests.push({
+//             userId: item.team_join_requests.requesterId,
+//             gamerTag: item.requester.gamerTag, // Include gamerTag for join requests
+//             status: item.team_join_requests.status,
+//           });
+//         }
+
+//         return acc;
+//       },
+//       {}
+//     );
+
+//     // Convert to array if needed
+//     const result: GroupedTeam[] = Object.values(groupedTeams);
+
+//     return {
+//       success: true,
+//       message: "Teams fetched.",
+//       data: result,
+//     };
+//   } catch (error) {
+//     console.log("🚀 ~ getUserTeams ~ error:", error);
+//     return {
+//       success: false,
+//       error: "Could not fetch teams.",
+//     };
+//   }
+// }
+
 export async function getUserTeams(userId: number) {
   try {
-    // Create aliases for self-joins
-    const inviteeAlias = alias(users, "invitee");
-    const requesterAlias = alias(users, "requester");
-
-    const userTeams = await db
+    // 1. Fetch teams where the user is a captain or a member
+    const teamsQuery = db
       .select()
       .from(teams)
       .leftJoin(teamMembers, eq(teams.id, teamMembers.teamId))
-      .leftJoin(users, eq(teamMembers.userId, users.id))
-      .leftJoin(teamInviteRequests, eq(teams.id, teamInviteRequests.teamId))
-      .leftJoin(inviteeAlias, eq(teamInviteRequests.inviteeId, inviteeAlias.id)) // Join for invitees
-      .leftJoin(teamJoinRequests, eq(teams.id, teamJoinRequests.teamId))
-      .leftJoin(
-        requesterAlias,
-        eq(teamJoinRequests.requesterId, requesterAlias.id)
-      ) // Join for requesters
-      .where(eq(teams.captainId, userId));
+      .where(or(eq(teams.captainId, userId), eq(teamMembers.userId, userId)));
+    const teamsData = await teamsQuery;
 
-    if (!userTeams) {
-      return {
-        success: false,
-        error: "Teams not found",
-      };
-    }
+    // Extract team IDs for further queries
+    const teamIds = Array.from(
+      new Set(
+        teamsData
+          .flatMap((team) => [
+            team.teams.id,
+            team.team_members ? team.team_members.userId : [],
+          ])
+          .flat()
+      )
+    ).filter((id): id is number => typeof id === "number"); // Filter out any non-numbers
 
-    const groupedTeams = userTeams.reduce<{ [key: number]: GroupedTeam }>(
-      (acc, item) => {
-        const teamId = item.teams.id;
-
-        // Check if the team is already in the accumulator
-        if (!acc[teamId]) {
-          acc[teamId] = {
-            team: item.teams,
-            members: [],
-            invites: [],
-            joinRequests: [],
-          };
-        }
-
-        // Add team member if present
-        if (item.team_members && item.users) {
-          acc[teamId].members.push({
-            userId: item.team_members.userId,
-            // email: item.users.email,
-            // phone: item.users.phone,
-            gamerTag: item.users.gamerTag,
-          });
-        }
-
-        // Add invite if present
-        if (item.team_invite_requests && item.invitee) {
-          acc[teamId].invites.push({
-            userId: item.team_invite_requests.inviteeId,
-            gamerTag: item.invitee.gamerTag, // Include gamerTag for invites
-            status: item.team_invite_requests.status,
-          });
-        }
-
-        // Add join request if present
-        if (item.team_join_requests && item.requester) {
-          acc[teamId].joinRequests.push({
-            userId: item.team_join_requests.requesterId,
-            gamerTag: item.requester.gamerTag, // Include gamerTag for join requests
-            status: item.team_join_requests.status,
-          });
-        }
-
-        return acc;
-      },
-      {}
+    // 2. Fetch pending join requests for those teams
+    const joinRequestsQuery = db
+      .select()
+      .from(teamJoinRequests)
+      .where(
+        and(
+          eq(teamJoinRequests.status, "pending"),
+          inArray(teamJoinRequests.teamId, teamIds)
+        )
+      );
+    const joinRequestsData = await joinRequestsQuery;
+    const requestersIds = Array.from(
+      new Set(joinRequestsData.map((request) => request.requesterId))
     );
+
+    // 3. Fetch gamer tags for all users involved
+    // - Fetch team members including captain
+    const allUserIds = Array.from(
+      new Set(
+        teamsData.flatMap((team) => [
+          team.teams.captainId,
+          team.team_members ? team.team_members.userId : [],
+        ])
+      )
+    ).filter((id): id is number => typeof id === "number"); // Filter out any non-numbers
+
+    const membersQuery = db
+      .select()
+      .from(users)
+      .where(inArray(users.id, allUserIds));
+    const membersData = await membersQuery;
+
+    // - Fetch requesters
+    const requestersQuery = db
+      .select()
+      .from(users)
+      .where(inArray(users.id, requestersIds));
+    const requestersData = await requestersQuery;
+
+    // - Fetch invites
+    const invitesQuery = db
+      .select()
+      .from(teamInviteRequests)
+      .where(
+        and(
+          eq(teamInviteRequests.status, "pending"),
+          inArray(teamInviteRequests.teamId, teamIds)
+        )
+      );
+    const invitesData = await invitesQuery;
+    const inviteesIds = Array.from(
+      new Set(invitesData.map((invite) => invite.inviteeId))
+    );
+
+    // - Fetch invitees
+    const inviteesQuery = db
+      .select()
+      .from(users)
+      .where(inArray(users.id, inviteesIds));
+    const inviteesData = await inviteesQuery;
+
+    // 4. Combine results
+    const groupedTeams: { [key: number]: GroupedTeam } = {};
+
+    for (const teamItem of teamsData) {
+      const teamId = teamItem.teams.id;
+
+      if (!groupedTeams[teamId]) {
+        groupedTeams[teamId] = {
+          team: teamItem.teams,
+          members: [],
+          invites: [],
+          joinRequests: [],
+        };
+      }
+
+      // Add members if not already added
+      if (teamItem.team_members) {
+        const userId = teamItem.team_members.userId;
+        const isAlreadyAdded = groupedTeams[teamId].members.some(
+          (member) => member.userId === userId
+        );
+        if (!isAlreadyAdded) {
+          const member = membersData.find((user) => user.id === userId);
+          groupedTeams[teamId].members.push({
+            userId,
+            gamerTag: member?.gamerTag || "Unknown",
+          });
+        }
+      }
+
+      // Always add captain if not already added
+      const captainId = teamItem.teams.captainId;
+      const isCaptainAlreadyAdded = groupedTeams[teamId].members.some(
+        (member) => member.userId === captainId
+      );
+      if (!isCaptainAlreadyAdded) {
+        const captain = membersData.find((user) => user.id === captainId);
+        groupedTeams[teamId].members.push({
+          userId: captainId,
+          gamerTag: captain?.gamerTag || "Unknown",
+        });
+      }
+
+      // Add join requests
+      const joinRequestsForTeam = joinRequestsData.filter(
+        (request) => request.teamId === teamId
+      );
+      groupedTeams[teamId].joinRequests = joinRequestsForTeam.map(
+        (request) => ({
+          userId: request.requesterId,
+          gamerTag:
+            requestersData.find((user) => user.id === request.requesterId)
+              ?.gamerTag || "Unknown",
+          status: request.status,
+        })
+      );
+
+      // Add invites
+      const invitesForTeam = invitesData.filter(
+        (invite) => invite.teamId === teamId
+      );
+      groupedTeams[teamId].invites = invitesForTeam.map((invite) => ({
+        userId: invite.inviteeId,
+        gamerTag:
+          inviteesData.find((user) => user.id === invite.inviteeId)?.gamerTag ||
+          "Unknown",
+        status: invite.status,
+      }));
+    }
 
     // Convert to array if needed
     const result: GroupedTeam[] = Object.values(groupedTeams);
@@ -427,6 +599,361 @@ export async function inviteUserToTeam(teamId: number, memberId: number) {
     };
   } catch (error) {
     console.log("🚀 ~ inviteUserToTeam ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function acceptJoinRequest(teamId: number, userId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Get the current user's email
+    const authUser = await clerkClient.users.getUser(authUserId);
+    const email = authUser.primaryEmailAddress?.emailAddress;
+    if (!email) {
+      return { success: false, error: "No email linked with user" };
+    }
+
+    // Get the current user's ID
+    const user = await db.select().from(users).where(eq(users.email, email));
+    const currentUserId = user[0].id;
+
+    // Check if the team exists and if the current user is the captain
+    const team = await db.select().from(teams).where(eq(teams.id, teamId));
+    if (team.length === 0) {
+      return { success: false, error: "Team not found" };
+    }
+
+    if (team[0].captainId !== currentUserId) {
+      return { success: false, error: "You are not the captain of this team" };
+    }
+
+    // Check if the join request exists and is pending
+    const joinRequest = await db
+      .select()
+      .from(teamJoinRequests)
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, userId),
+          eq(teamJoinRequests.status, "pending")
+        )
+      );
+
+    if (joinRequest.length === 0) {
+      return {
+        success: false,
+        error: "Join request not found or already accepted/rejected",
+      };
+    }
+
+    // Update the join request status to accepted
+    await db
+      .update(teamJoinRequests)
+      .set({ status: "accepted" })
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, userId)
+        )
+      );
+
+    // Add the user to the team members
+    await db.insert(teamMembers).values({
+      teamId,
+      userId,
+    });
+
+    revalidatePath("/account");
+
+    return { success: true, message: "Join request accepted successfully." };
+  } catch (error) {
+    console.log("🚀 ~ acceptJoinRequest ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function rejectJoinRequest(teamId: number, userId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Get the current user's email
+    const authUser = await clerkClient.users.getUser(authUserId);
+    const email = authUser.primaryEmailAddress?.emailAddress;
+    if (!email) {
+      return { success: false, error: "No email linked with user" };
+    }
+
+    // Get the current user's ID
+    const user = await db.select().from(users).where(eq(users.email, email));
+    const currentUserId = user[0].id;
+
+    // Check if the team exists and if the current user is the captain
+    const team = await db.select().from(teams).where(eq(teams.id, teamId));
+    if (team.length === 0) {
+      return { success: false, error: "Team not found" };
+    }
+
+    if (team[0].captainId !== currentUserId) {
+      return { success: false, error: "You are not the captain of this team" };
+    }
+
+    // Check if the join request exists and is pending
+    const joinRequest = await db
+      .select()
+      .from(teamJoinRequests)
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, userId),
+          eq(teamJoinRequests.status, "pending")
+        )
+      );
+
+    if (joinRequest.length === 0) {
+      return {
+        success: false,
+        error: "Join request not found or already accepted/rejected",
+      };
+    }
+
+    // Update the join request status to rejected
+    await db
+      .update(teamJoinRequests)
+      .set({ status: "rejected" })
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, userId)
+        )
+      );
+
+    revalidatePath("/account");
+
+    return { success: true, message: "Join request rejected successfully." };
+  } catch (error) {
+    console.log("🚀 ~ rejectJoinRequest ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+// export async function fetchTeamInvites(userId: number) {
+//   try {
+//     const { userId: authUserId } = auth();
+//     if (!authUserId) {
+//       return { success: false, error: "No Logged In User" };
+//     }
+
+//     // check owenership
+//     const dbUserId = await getDbUserId(authUserId);
+//     if (!dbUserId.success) {
+//       return { success: false, error: "User not found in the database" };
+//     }
+
+//     // Check if the current user is a member of the team
+//     const user = await db
+//       .select()
+//       .from(users)
+//       .where(eq(users.id, dbUserId.userId));
+//     if (user.length === 0) {
+//       return { success: false, error: "User not found" };
+//     }
+
+//     // Fetch team invites for the current user
+//     const invites = await db
+//       .select()
+//       .from(teamInviteRequests)
+//       .where(eq(teamInviteRequests.inviteeId, userId));
+
+//     return { success: true, data: invites };
+//   } catch (error) {
+//     console.log("🚀 ~ fetchTeamInvites ~ error:", error);
+//     return { success: false, error: "Something went wrong!" };
+//   }
+// }
+
+export async function fetchTeamInvites(userId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Check if the user exists in the database
+    const dbUserId = await getDbUserId(authUserId);
+    if (!dbUserId.success) {
+      return { success: false, error: "User not found in the database" };
+    }
+
+    // Fetch pending team invites for the user
+    const invites = await db
+      .select({
+        inviteId: teamInviteRequests.id,
+        inviterId: teamInviteRequests.inviterId,
+        teamId: teamInviteRequests.teamId,
+        inviteeId: teamInviteRequests.inviteeId,
+        teamName: teams.name,
+        inviterGamerTag: users.gamerTag,
+      })
+      .from(teamInviteRequests)
+      .innerJoin(users, eq(teamInviteRequests.inviterId, users.id))
+      .innerJoin(teams, eq(teamInviteRequests.teamId, teams.id))
+      .where(
+        and(
+          eq(teamInviteRequests.inviteeId, userId),
+          eq(teamInviteRequests.status, "pending")
+        )
+      );
+
+    return { success: true, data: invites };
+  } catch (error) {
+    console.log("🚀 ~ fetchTeamInvites ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function acceptInvite(teamId: number, userId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Get the current user's email
+    const authUser = await clerkClient.users.getUser(authUserId);
+    const email = authUser.primaryEmailAddress?.emailAddress;
+    if (!email) {
+      return { success: false, error: "No email linked with user" };
+    }
+
+    // Get the current user's ID
+    const user = await db.select().from(users).where(eq(users.email, email));
+    const currentUserId = user[0].id;
+
+    // Check if the team exists and if the current user is the captain
+    const team = await db.select().from(teams).where(eq(teams.id, teamId));
+    if (team.length === 0) {
+      return { success: false, error: "Team not found" };
+    }
+
+    if (userId !== currentUserId) {
+      return { success: false, error: "You are not invited to this team" };
+    }
+
+    // Check if the invite exists and is pending
+    const invite = await db
+      .select()
+      .from(teamInviteRequests)
+      .where(
+        and(
+          eq(teamInviteRequests.teamId, teamId),
+          eq(teamInviteRequests.inviteeId, userId),
+          eq(teamInviteRequests.status, "pending")
+        )
+      );
+
+    if (invite.length === 0) {
+      return {
+        success: false,
+        error: "Invite not found or already accepted/rejected",
+      };
+    }
+
+    // Update the invite status to accepted
+    await db
+      .update(teamInviteRequests)
+      .set({ status: "accepted" })
+      .where(
+        and(
+          eq(teamInviteRequests.teamId, teamId),
+          eq(teamInviteRequests.inviteeId, userId)
+        )
+      );
+
+    // Add the user to the team members
+    await db.insert(teamMembers).values({
+      teamId,
+      userId,
+    });
+
+    revalidatePath("/account");
+
+    return { success: true, message: "Invite accepted successfully." };
+  } catch (error) {
+    console.log("🚀 ~ acceptInvite ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function rejectInvite(teamId: number, userId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Get the current user's email
+    const authUser = await clerkClient.users.getUser(authUserId);
+    const email = authUser.primaryEmailAddress?.emailAddress;
+    if (!email) {
+      return { success: false, error: "No email linked with user" };
+    }
+
+    // Get the current user's ID
+    const user = await db.select().from(users).where(eq(users.email, email));
+    const currentUserId = user[0].id;
+
+    // Check if the team exists and if the current user is the captain
+    const team = await db.select().from(teams).where(eq(teams.id, teamId));
+    if (team.length === 0) {
+      return { success: false, error: "Team not found" };
+    }
+
+    if (userId !== currentUserId) {
+      return { success: false, error: "You are not invited to this team" };
+    }
+
+    // Check if the invite exists and is pending
+    const invite = await db
+      .select()
+      .from(teamInviteRequests)
+      .where(
+        and(
+          eq(teamInviteRequests.teamId, teamId),
+          eq(teamInviteRequests.inviteeId, userId),
+          eq(teamInviteRequests.status, "pending")
+        )
+      );
+
+    if (invite.length === 0) {
+      return {
+        success: false,
+        error: "Invite not found or already accepted/rejected",
+      };
+    }
+
+    // Update the invite status to rejected
+    await db
+      .update(teamInviteRequests)
+      .set({ status: "rejected" })
+      .where(
+        and(
+          eq(teamInviteRequests.teamId, teamId),
+          eq(teamInviteRequests.inviteeId, userId)
+        )
+      );
+
+    revalidatePath("/account");
+
+    return { success: true, message: "Invite rejected successfully." };
+  } catch (error) {
+    console.log("🚀 ~ rejectInvite ~ error:", error);
     return { success: false, error: "Something went wrong!" };
   }
 }
