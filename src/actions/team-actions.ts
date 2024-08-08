@@ -7,9 +7,10 @@ import { users } from "@/db/schema/users";
 import CreateTeamSchema from "@/lib/schema/CreateTeamSchema";
 import { GroupedTeam } from "@/types/teams";
 import { auth, clerkClient } from "@clerk/nextjs/server";
-import { and, eq, inArray, like, ne, or } from "drizzle-orm";
+import { and, eq, inArray, like, ne, notInArray, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { format } from "date-fns"; // Import date-fns for date formatting
 
 export async function createTeam(formInputs: unknown) {
   try {
@@ -667,41 +668,6 @@ export async function rejectJoinRequest(teamId: number, userId: number) {
   }
 }
 
-// export async function fetchTeamInvites(userId: number) {
-//   try {
-//     const { userId: authUserId } = auth();
-//     if (!authUserId) {
-//       return { success: false, error: "No Logged In User" };
-//     }
-
-//     // check owenership
-//     const dbUserId = await getDbUserId(authUserId);
-//     if (!dbUserId.success) {
-//       return { success: false, error: "User not found in the database" };
-//     }
-
-//     // Check if the current user is a member of the team
-//     const user = await db
-//       .select()
-//       .from(users)
-//       .where(eq(users.id, dbUserId.userId));
-//     if (user.length === 0) {
-//       return { success: false, error: "User not found" };
-//     }
-
-//     // Fetch team invites for the current user
-//     const invites = await db
-//       .select()
-//       .from(teamInviteRequests)
-//       .where(eq(teamInviteRequests.inviteeId, userId));
-
-//     return { success: true, data: invites };
-//   } catch (error) {
-//     console.log("🚀 ~ fetchTeamInvites ~ error:", error);
-//     return { success: false, error: "Something went wrong!" };
-//   }
-// }
-
 export async function fetchTeamInvites(userId: number) {
   try {
     const { userId: authUserId } = auth();
@@ -878,6 +844,206 @@ export async function rejectInvite(teamId: number, userId: number) {
     return { success: true, message: "Invite rejected successfully." };
   } catch (error) {
     console.log("🚀 ~ rejectInvite ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function searchTeams(searchQuery: string) {
+  try {
+    const { userId } = auth();
+    if (!userId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    if (!searchQuery.trim()) {
+      return { success: false, error: "Search query cannot be empty" };
+    }
+
+    const dbUserId = await getDbUserId(userId);
+    if (!dbUserId.success) {
+      return { success: false, error: "User not found in the database" };
+    }
+
+    // Fetch team IDs where the user is a member
+    const userTeamsQuery = db
+      .select({ teamId: teamMembers.teamId })
+      .from(teamMembers)
+      .where(eq(teamMembers.userId, dbUserId.userId));
+    const userTeamsData = await userTeamsQuery;
+    const userTeamIds = userTeamsData.map((row) => row.teamId);
+
+    // Perform the search query for teams
+    const results = await db
+      .select()
+      .from(teams)
+      .where(
+        and(
+          like(teams.name, `%${searchQuery}%`),
+          ne(teams.captainId, dbUserId.userId), // Exclude teams where the user is the captain
+          notInArray(teams.id, userTeamIds) // Exclude teams where the user is already a member
+        )
+      );
+
+    return { success: true, data: results };
+  } catch (error) {
+    console.log("🚀 ~ searchTeams ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function sendJoinRequest(teamId: number) {
+  try {
+    const { userId } = auth();
+    if (!userId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Get the user's DB ID
+    const dbUserId = await getDbUserId(userId);
+    if (!dbUserId.success) {
+      return { success: false, error: "User not found in the database" };
+    }
+
+    // Check if the team exists
+    const teamQuery = db.select().from(teams).where(eq(teams.id, teamId));
+    const teamData = await teamQuery;
+    if (teamData.length === 0) {
+      return { success: false, error: "Team not found" };
+    }
+
+    // Check if the user is already a member of the team
+    const memberCheck = db
+      .select()
+      .from(teamMembers)
+      .where(
+        and(
+          eq(teamMembers.teamId, teamId),
+          eq(teamMembers.userId, dbUserId.userId)
+        )
+      );
+    const memberData = await memberCheck;
+    if (memberData.length > 0) {
+      return { success: false, error: "You are already a member of this team" };
+    }
+
+    // Check if a join request already exists
+    const existingRequestCheck = db
+      .select()
+      .from(teamJoinRequests)
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, dbUserId.userId)
+        )
+      );
+    const existingRequestData = await existingRequestCheck;
+    if (existingRequestData.length > 0) {
+      return { success: false, error: "Join request already exists" };
+    }
+
+    // Insert the join request
+    const insertResult = await db.insert(teamJoinRequests).values({
+      teamId,
+      requesterId: dbUserId.userId,
+      status: "pending",
+      dateRequested: format(new Date(), "yyyy-MM-dd HH:mm:ss"), // Current date and time
+    });
+
+    revalidatePath("/account");
+
+    return { success: true, message: "Join request sent successfully" };
+  } catch (error) {
+    console.log("🚀 ~ sendJoinRequest ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function fetchUserJoinRequests(userId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Check if the user exists in the database
+    const dbUserId = await getDbUserId(authUserId);
+    if (!dbUserId.success) {
+      return { success: false, error: "User not found in the database" };
+    }
+
+    // Fetch pending join requests made by the user
+    const joinRequests = await db
+      .select({
+        requestId: teamJoinRequests.id,
+        teamId: teamJoinRequests.teamId,
+        requesterId: teamJoinRequests.requesterId,
+        teamName: teams.name,
+        status: teamJoinRequests.status,
+        dateRequested: teamJoinRequests.dateRequested,
+      })
+      .from(teamJoinRequests)
+      .innerJoin(teams, eq(teamJoinRequests.teamId, teams.id))
+      .where(
+        and(
+          eq(teamJoinRequests.requesterId, userId),
+          eq(teamJoinRequests.status, "pending")
+        )
+      );
+
+    return { success: true, data: joinRequests };
+  } catch (error) {
+    console.log("🚀 ~ fetchUserJoinRequests ~ error:", error);
+    return { success: false, error: "Something went wrong!" };
+  }
+}
+
+export async function cancelJoinRequest(teamId: number) {
+  try {
+    const { userId: authUserId } = auth();
+    if (!authUserId) {
+      return { success: false, error: "No Logged In User" };
+    }
+
+    // Get the current user's DB ID
+    const dbUserId = await getDbUserId(authUserId);
+    if (!dbUserId.success) {
+      return { success: false, error: "User not found in the database" };
+    }
+
+    // Check if the join request exists and is pending
+    const joinRequest = await db
+      .select()
+      .from(teamJoinRequests)
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, dbUserId.userId),
+          eq(teamJoinRequests.status, "pending")
+        )
+      );
+
+    if (joinRequest.length === 0) {
+      return {
+        success: false,
+        error: "Join request not found or already processed",
+      };
+    }
+
+    // Delete the join request
+    await db
+      .delete(teamJoinRequests)
+      .where(
+        and(
+          eq(teamJoinRequests.teamId, teamId),
+          eq(teamJoinRequests.requesterId, dbUserId.userId)
+        )
+      );
+
+    revalidatePath("/account");
+
+    return { success: true, message: "Join request canceled successfully." };
+  } catch (error) {
+    console.log("🚀 ~ cancelJoinRequest ~ error:", error);
     return { success: false, error: "Something went wrong!" };
   }
 }
