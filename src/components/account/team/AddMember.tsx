@@ -23,34 +23,11 @@ import {
   DrawerTrigger,
 } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import CreateTeamSchema from "@/lib/schema/CreateTeamSchema";
-import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  Form,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormControl,
-  FormMessage,
-} from "@/components/ui/form";
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from "@/components/ui/select";
-import {
-  inviteUserToTeam,
-  searchUsers,
-  updateTeam,
-} from "@/actions/team-actions";
-import { toast, useToast } from "@/components/ui/use-toast";
 import { useState, useCallback } from "react";
 import _ from "lodash";
 import { Check, UserPlus } from "lucide-react";
+import { toast, useToast } from "@/components/ui/use-toast";
+import { inviteUserToTeam, searchUsers } from "@/actions/team-actions";
 
 interface Team {
   id: number;
@@ -59,30 +36,32 @@ interface Team {
   type: "duo" | "squad";
 }
 
-type AddMemeberProps = {
+type AddMemberProps = {
   team: Team;
 };
 
-export default function AddMember({ team }: AddMemeberProps) {
+export default function AddMember({ team }: AddMemberProps) {
   const [open, setOpen] = React.useState(false);
-  // const isDesktop = useMediaQuery("(min-width: 768px)");
+  const isDesktop = useMediaQuery("(min-width: 768px)");
 
-  // if (isDesktop) {
-  //   return (
-  //     <Dialog open={open} onOpenChange={setOpen}>
-  //       <DialogTrigger asChild>
-  //         <Button variant="outline">Update Team</Button>
-  //       </DialogTrigger>
-  //       <DialogContent className="sm:max-w-[425px]">
-  //         <DialogHeader>
-  //           <DialogTitle>Edit Team</DialogTitle>
-  //           <DialogDescription>Give a name and selec type.</DialogDescription>
-  //         </DialogHeader>
-  //         <UpdateTeamForm onOpenChange={setOpen} team={team} />
-  //       </DialogContent>
-  //     </Dialog>
-  //   );
-  // }
+  if (isDesktop) {
+    return (
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogTrigger asChild>
+          <Button variant="outline">Add Members</Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Add Members</DialogTitle>
+            <DialogDescription>
+              Search and invite players to join your team
+            </DialogDescription>
+          </DialogHeader>
+          <AddMemberForm onOpenChange={setOpen} team={team} />
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Drawer open={open} onOpenChange={setOpen}>
@@ -93,7 +72,7 @@ export default function AddMember({ team }: AddMemeberProps) {
         <DrawerHeader className="text-left">
           <DrawerTitle>Add Members</DrawerTitle>
           <DrawerDescription>
-            Search and invite players to join you team
+            Search and invite players to join your team
           </DrawerDescription>
         </DrawerHeader>
         <AddMemberForm className="px-4" onOpenChange={setOpen} team={team} />
@@ -123,6 +102,7 @@ function AddMemberForm({ className, onOpenChange, team }: AddMemberFormProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<User[]>([]);
   const [addedUsers, setAddedUsers] = useState<Set<number>>(new Set());
+  const { toast } = useToast();
 
   const fetchResults = async (searchQuery: string) => {
     const response = await searchUsers(searchQuery);
@@ -141,6 +121,7 @@ function AddMemberForm({ className, onOpenChange, team }: AddMemberFormProps) {
     setQuery(value);
     debouncedFetchResults(value);
   };
+
   const handleAddMember = async (userId: number) => {
     try {
       const response = await inviteUserToTeam(team.id, userId);
@@ -164,8 +145,9 @@ function AddMemberForm({ className, onOpenChange, team }: AddMemberFormProps) {
       });
     }
   };
+
   return (
-    <div className="p-4">
+    <div className={cn("p-4", className)}>
       <Input
         type="text"
         placeholder="Search for players..."
@@ -178,16 +160,16 @@ function AddMemberForm({ className, onOpenChange, team }: AddMemberFormProps) {
           results.map((result, index) => (
             <div
               key={index}
-              className=" flex justify-between items-center border rounded-md p-2"
+              className="flex justify-between items-center border rounded-md p-2"
             >
-              <span>{result.gamerTag}</span>
+              <span>{result.gamerTag || "Unknown"}</span>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => handleAddMember(result.id)}
                 disabled={addedUsers.has(result.id)}
               >
-                {addedUsers.has(result.id) ? <Check /> : <UserPlus />}{" "}
+                {addedUsers.has(result.id) ? <Check /> : <UserPlus />}
               </Button>
             </div>
           ))
