@@ -1,9 +1,9 @@
 import React from "react";
 import { getUserDetails } from "@/actions/user-actions";
 import { fetchTeamInvites, getUserTeams } from "@/actions/team-actions";
-import UserCard from "./UserCard";
-import TeamSection from "./TeamSection";
-import TeamInvitesSection from "./TeamInvitesSection";
+import UserCard from "@/components/account/user/UserCard";
+import TeamSection from "@/components/account/team/TeamSection";
+import TeamInvitesSection from "@/components/account/team/TeamInvitesSection";
 
 export default async function Account() {
   const { data } = await getUserDetails();
