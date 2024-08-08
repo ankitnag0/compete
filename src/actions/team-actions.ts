@@ -5,9 +5,9 @@ import { teamInviteRequests, teamJoinRequests } from "@/db/schema/join-invites";
 import { teamMembers, teams } from "@/db/schema/teams";
 import { users } from "@/db/schema/users";
 import CreateTeamSchema from "@/lib/schema/CreateTeamSchema";
+import { GroupedTeam } from "@/types/teams";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { and, eq, inArray, like, ne, or } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -163,149 +163,6 @@ export async function removeTeamMember(formInputs: unknown) {
     };
   }
 }
-
-interface Team {
-  id: number;
-  name: string;
-  captainId: number;
-  type: "duo" | "squad";
-}
-
-interface TeamMember {
-  teamId: number;
-  userId: number;
-}
-
-interface User {
-  id: number;
-  email: string;
-  phone: string;
-  gamerTag: string;
-}
-
-// Define types for invite and join requests
-type Invite = {
-  userId: number;
-  gamerTag: string | null; // Include gamerTag
-  status: string; // Adjust status type if needed
-};
-
-type JoinRequest = {
-  userId: number;
-  gamerTag: string | null; // Include gamerTag
-  status: string; // Adjust status type if needed
-};
-
-// Update the GroupedTeam type to include invites and joinRequests
-type GroupedTeam = {
-  team: {
-    id: number;
-    name: string;
-    captainId: number;
-    type: "duo" | "squad";
-  };
-  members: {
-    userId: number;
-    // email: string;
-    // phone: string | null;
-    gamerTag: string | null;
-  }[];
-  invites: Invite[];
-  joinRequests: JoinRequest[];
-};
-
-// export async function getUserTeams(userId: number) {
-//   try {
-//     // Create aliases for self-joins
-//     const inviteeAlias = alias(users, "invitee");
-//     const requesterAlias = alias(users, "requester");
-
-//     const userTeams = await db
-//       .select()
-//       .from(teams)
-//       .leftJoin(teamMembers, eq(teams.id, teamMembers.teamId))
-//       .leftJoin(users, eq(teamMembers.userId, users.id))
-//       .leftJoin(teamInviteRequests, eq(teams.id, teamInviteRequests.teamId))
-//       .leftJoin(inviteeAlias, eq(teamInviteRequests.inviteeId, inviteeAlias.id))
-//       .leftJoin(teamJoinRequests, eq(teams.id, teamJoinRequests.teamId))
-//       .leftJoin(
-//         requesterAlias,
-//         eq(teamJoinRequests.requesterId, requesterAlias.id)
-//       )
-//       .where(or(eq(teams.captainId, userId), eq(teamMembers.userId, userId)));
-//     console.log("🚀 ~ getUserTeams ~ userTeams:", userTeams);
-
-//     if (!userTeams) {
-//       return {
-//         success: false,
-//         error: "Teams not found",
-//       };
-//     }
-
-//     const groupedTeams = userTeams.reduce<{ [key: number]: GroupedTeam }>(
-//       (acc, item) => {
-//         console.log("🚀 ~ getUserTeams ~ item:", item);
-//         const teamId = item.teams.id;
-
-//         // Check if the team is already in the accumulator
-//         if (!acc[teamId]) {
-//           acc[teamId] = {
-//             team: item.teams,
-//             members: [],
-//             invites: [],
-//             joinRequests: [],
-//           };
-//         }
-
-//         // Add team member if present
-//         if (item.team_members && item.users) {
-//           acc[teamId].members.push({
-//             userId: item.team_members.userId,
-//             // email: item.users.email,
-//             // phone: item.users.phone,
-//             gamerTag: item.users.gamerTag,
-//           });
-//         }
-
-//         // Add invite if present
-//         if (item.team_invite_requests && item.invitee) {
-//           acc[teamId].invites.push({
-//             userId: item.team_invite_requests.inviteeId,
-//             gamerTag: item.invitee.gamerTag, // Include gamerTag for invites
-//             status: item.team_invite_requests.status,
-//           });
-//         }
-
-//         // Add join request if present
-//         if (item.team_join_requests && item.requester) {
-//           acc[teamId].joinRequests.push({
-//             userId: item.team_join_requests.requesterId,
-//             gamerTag: item.requester.gamerTag, // Include gamerTag for join requests
-//             status: item.team_join_requests.status,
-//           });
-//         }
-
-//         return acc;
-//       },
-//       {}
-//     );
-
-//     // Convert to array if needed
-//     const result: GroupedTeam[] = Object.values(groupedTeams);
-
-//     return {
-//       success: true,
-//       message: "Teams fetched.",
-//       data: result,
-//     };
-//   } catch (error) {
-//     console.log("🚀 ~ getUserTeams ~ error:", error);
-//     return {
-//       success: false,
-//       error: "Could not fetch teams.",
-//     };
-//   }
-// }
 
 export async function getUserTeams(userId: number) {
   try {
