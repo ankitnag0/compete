@@ -154,9 +154,9 @@ export async function removeTeamMember(formInputs: unknown) {
     .where(
       and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, memberId))
     );
-  revalidatePath("/account");
 
   if (removeTeamMember.length === 1) {
+    revalidatePath("/account");
     return {
       success: true,
       message: "Team member removed from team",
@@ -593,6 +593,8 @@ export async function inviteUserToTeam(teamId: number, memberId: number) {
       dateSent: new Date().toISOString(), // Use ISO format for date storage
     });
 
+    revalidatePath("/account");
+
     return {
       success: true,
       message: "Invite sent successfully.",
@@ -601,6 +603,71 @@ export async function inviteUserToTeam(teamId: number, memberId: number) {
     console.log("🚀 ~ inviteUserToTeam ~ error:", error);
     return { success: false, error: "Something went wrong!" };
   }
+}
+
+const CancelInviteSchema = z.object({
+  teamId: z.coerce.number(),
+  userId: z.coerce.number(),
+});
+
+export async function cancelInvite(formInputs: unknown) {
+  const { userId } = auth();
+  if (!userId) {
+    return { success: false, error: "No Logged In User" };
+  }
+
+  const parsed = CancelInviteSchema.safeParse(formInputs);
+  if (parsed.error) {
+    return { success: false, error: parsed.error.format() };
+  }
+
+  const { teamId, userId: inviteeId } = parsed.data;
+
+  // Check ownership
+  const dbUserId = await getDbUserId(userId);
+  if (!dbUserId.success) {
+    return { success: false, error: "User not found in the database" };
+  }
+
+  const team = await db
+    .select()
+    .from(teams)
+    .where(and(eq(teams.id, teamId), eq(teams.captainId, dbUserId.userId)));
+
+  if (team.length === 0) {
+    return { success: false, error: "Team not found or not owned by user" };
+  }
+
+  const invite = await db
+    .select()
+    .from(teamInviteRequests)
+    .where(
+      and(
+        eq(teamInviteRequests.teamId, teamId),
+        eq(teamInviteRequests.inviteeId, inviteeId)
+      )
+    );
+
+  if (invite.length === 0) {
+    return { success: false, error: "Invite not found" };
+  }
+
+  await db
+    .delete(teamInviteRequests)
+    .where(
+      and(
+        eq(teamInviteRequests.teamId, teamId),
+        eq(teamInviteRequests.inviteeId, inviteeId)
+      )
+    );
+
+  // Optionally, you might want to trigger a revalidation or refresh if needed
+  revalidatePath("/account");
+
+  return {
+    success: true,
+    message: "Invite cancelled successfully",
+  };
 }
 
 export async function acceptJoinRequest(teamId: number, userId: number) {

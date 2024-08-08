@@ -16,6 +16,7 @@ import AcceptJoinRequest from "./AcceptJoinRequest";
 import RejectJoinRequest from "./RejectJoinRequest";
 import AcceptInvite from "./AcceptInvite";
 import RejectInvite from "./RejectInvite";
+import CancelInvite from "./CancelInvite";
 
 export default async function Account() {
   const { data } = await getUserDetails();
@@ -76,7 +77,7 @@ export default async function Account() {
                     )}
 
                     {/* Display invite requests */}
-                    {groupedTeam.invites.length > 0 && (
+                    {/* {groupedTeam.invites.length > 0 && (
                       <div>
                         <h3 className="text-lg font-semibold">
                           Invite Requests
@@ -88,6 +89,36 @@ export default async function Account() {
                           >
                             <p>{invite.gamerTag}</p>
                             <p>{invite.status}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )} */}
+
+                    {/* Display invite requests */}
+                    {groupedTeam.invites.length > 0 && (
+                      <div>
+                        <h3 className="text-lg font-semibold">
+                          Invite Requests
+                        </h3>
+                        {groupedTeam.invites.map((invite) => (
+                          <div
+                            key={invite.userId}
+                            className="flex justify-between border p-2 rounded-md"
+                          >
+                            <p>{invite.gamerTag}</p>
+                            <div className="flex items-center">
+                              {data?.userId === groupedTeam.team.captainId &&
+                              invite.status === "pending" ? (
+                                <div className="flex space-x-2">
+                                  <CancelInvite
+                                    teamId={groupedTeam.team.id}
+                                    userId={invite.userId}
+                                  />
+                                </div>
+                              ) : (
+                                <p>{invite.status}</p>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
